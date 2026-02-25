@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cube Dash</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    border: 2px solid #333;
+    border-radius: 4px;
+  }
+  #info {
+    color: #555;
+    font-size: 0.78rem;
+    margin-top: 10px;
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="info">SPACE / CLICK to jump &nbsp;·&nbsp; Double jump allowed &nbsp;·&nbsp; Don't touch the spikes!</div>
+
+<script>
+// ============================================================
+//  SETUP
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+
+canvas.width  = 800;
+canvas.height = 450;
+
+// ============================================================
+//  CONSTANTS
+// ============================================================
+const GROUND_Y     = canvas.height - 80;  // y-position of ground surface
+const GRAVITY      = 0.6;
+const JUMP_FORCE   = -13;
+const SCROLL_SPEED = 5;
+const CUBE_SIZE    = 36;
+const GROUND_H     = 80;                  // height of ground block
+
+// ============================================================
+//  COLORS / THEME
+// ============================================================
+const THEME = {
+  skyTop:    '#0d0d2b',
+  skyBot:    '#1a1040',
+  groundTop: '#2a1f5e',
+  groundBot: '#100b2e',
+  gridLine:  'rgba(80,60,180,0.15)',
+  cube:      '#00e5ff',
+  cubeGlow:  'rgba(0,229,255,0.35)',
+  cubeLine:  '#006080',
+  spike:     '#ff4466',
+  spikeGlow: 'rgba(255,68,102,0.4)',
+  platform:  '#7c3aed',
+  platGlow:  'rgba(124,58,237,0.4)',
+  particle:  ['#ff4466','#ff8800','#ffe000','#ffffff'],
+  orb:       '#ffe000',
+  text:      '#ffffff',
+  score:     '#00e5ff',
+  death:     '#ff4466',
+};
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+let state = 'waiting'; // 'waiting' | 'playing' | 'dead'
+let score = 0;
+let highScore = 0;
+let bgOffset = 0;
+
+// ============================================================
+//  PLAYER
+// ============================================================
+const player = {
+  x: 120,
+  y: GROUND_Y - CUBE_SIZE,
+  vy: 0,
+  angle: 0,
+  jumpsLeft: 2,       // double-jump
+  alive: true,
+  trailPoints: [],
+
+  reset() {
+    this.y = GROUND_Y - CUBE_SIZE;
+    this.vy = 0;
+    this.angle = 0;
+    this.jumpsLeft = 2;
+    this.alive = true;
+    this.trailPoints = [];
+  },
+
+  jump() {
+    if (this.jumpsLeft > 0) {
+      this.vy = JUMP_FORCE;
+      this.jumpsLeft--;
+      spawnJumpParticles();
+    }
+  },
+
+  update() {
+    this.vy += GRAVITY;
+    this.y  += this.vy;
+
+    // Rotate while airborne
+    if (this.y < GROUND_Y - CUBE_SIZE - 1) {
+      this.angle += 0.08;
+    } else {
+      // Snap angle to nearest 90° on landing
+      this.angle = Math.round(this.angle / (Math.PI / 2)) * (Math.PI / 2);
+      this.vy = 0;
+      this.y  = GROUND_Y - CUBE_SIZE;
+      this.jumpsLeft = 2;
+    }
+
+    // Trail
+    this.trailPoints.unshift({ x: this.x + CUBE_SIZE / 2, y: this.y + CUBE_SIZE / 2 });
+    if (this.trailPoints.length > 14) this.trailPoints.pop();
+  },
+
+  get rect() {
+    // Slightly shrunk hitbox for fairness
+    const pad = 4;
+    return { x: this.x + pad, y: this.y + pad, w: CUBE_SIZE - pad*2, h: CUBE_SIZE - pad*2 };
+  }
+};
+
+// ============================================================
+//  OBSTACLES
+// ============================================================
+let obstacles = [];
+let spawnTimer = 0;
+let spawnInterval = 90; // frames between spawns (decreases with score)
+
+function spawnObstacle() {
+  const type = weightedRandom([
+    { val: 'spike',     w: 50 },
+    { val: 'doublespike', w: 20 },
+    { val: 'platform',  w: 20 },
+    { val: 'gap',       w: 10 },
+  ]);
+
+  if (type === 'spike') {
+    obstacles.push({ type:'spike', x: canvas.width + 20, y: GROUND_Y, w: 36, h: 42 });
+  } else if (type === 'doublespike') {
+    obstacles.push({ type:'spike', x: canvas.width + 20,  y: GROUND_Y, w: 36, h: 42 });
+    obstacles.push({ type:'spike', x: canvas.width + 62,  y: GROUND_Y, w: 36, h: 42 });
+  } else if (type === 'platform') {
+    const platY = GROUND_Y - 90 - Math.random() * 60;
+    obstacles.push({ type:'platform', x: canvas.width + 20, y: platY, w: 80, h: 14 });
+    // spike on top of platform
+    obstacles.push({ type:'spike', x: canvas.width + 38, y: platY, w: 30, h: 36 });
+  } else if (type === 'gap') {
+    // Two spikes with a jumpable gap
+    obstacles.push({ type:'spike', x: canvas.width + 20, y: GROUND_Y, w: 36, h: 42 });
+    obstacles.push({ type:'spike', x: canvas.width + 130, y: GROUND_Y, w: 36, h: 42 });
+  }
+}
+
+function weightedRandom(items) {
+  const total = items.reduce((s, i) => s + i.w, 0);
+  let r = Math.random() * total;
+  for (const item of items) { r -= item.w; if (r <= 0) return item.val; }
+  return items[0].val;
+}
+
+function updateObstacles() {
+  obstacles.forEach(o => o.x -= SCROLL_SPEED);
+  obstacles = obstacles.filter(o => o.x > -200);
+
+  spawnTimer++;
+  // Difficulty ramp: minimum interval = 55 frames
+  spawnInterval = Math.max(55, 90 - Math.floor(score / 10));
+  if (spawnTimer >= spawnInterval) {
+    spawnObstacle();
+    spawnTimer = 0;
+  }
+}
+
+// ============================================================
+//  PARTICLES
+// ============================================================
+let particles = [];
+
+function spawnDeathParticles() {
+  for (let i = 0; i < 28; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 6;
+    particles.push({
+      x: player.x + CUBE_SIZE / 2,
+      y: player.y + CUBE_SIZE / 2,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.025 + Math.random() * 0.03,
+      size: 3 + Math.random() * 6,
+      color: THEME.particle[Math.floor(Math.random() * THEME.particle.length)],
+      square: Math.random() > 0.5,
+    });
+  }
+}
+
+function spawnJumpParticles() {
+  for (let i = 0; i < 6; i++) {
+    particles.push({
+      x: player.x + CUBE_SIZE / 2,
+      y: player.y + CUBE_SIZE,
+      vx: (Math.random() - 0.5) * 4,
+      vy: 1 + Math.random() * 3,
+      life: 1,
+      decay: 0.06,
+      size: 3 + Math.random() * 4,
+      color: THEME.cubeGlow,
+      square: false,
+    });
+  }
+}
+
+function updateParticles() {
+  particles.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.15; // mini gravity
+    p.life -= p.decay;
+  });
+  particles = particles.filter(p => p.life > 0);
+}
+
+// ============================================================
+//  COLLISION
+// ============================================================
+function rectsOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function checkCollisions() {
+  const pr = player.rect;
+  for (const o of obstacles) {
+    if (o.type === 'spike') {
+      // Use triangle collision: check if player rect overlaps spike bounding box
+      // then do a simple centre-point slope test for fairness
+      const hitbox = { x: o.x + 4, y: o.y - o.h, w: o.w - 8, h: o.h };
+      if (rectsOverlap(pr, hitbox)) {
+        // Extra check: is player centre above the spike's slope line?
+        const cx = (pr.x + pr.x + pr.w) / 2 - o.x;
+        const slopeY = o.y - (Math.abs(cx - o.w / 2) / (o.w / 2)) * o.h;
+        const cy = pr.y + pr.h;
+        if (cy > slopeY - 4) killPlayer();
+      }
+    } else if (o.type === 'platform') {
+      const hitbox = { x: o.x, y: o.y, w: o.w, h: o.h };
+      if (rectsOverlap(pr, hitbox)) {
+        // Land on top, or die on sides/bottom
+        if (player.vy >= 0 && pr.y + pr.h <= o.y + o.h + 6) {
+          player.y = o.y - CUBE_SIZE;
+          player.vy = 0;
+          player.jumpsLeft = 2;
+        } else {
+          killPlayer();
+        }
+      }
+    }
+  }
+}
+
+function killPlayer() {
+  if (!player.alive) return;
+  player.alive = false;
+  spawnDeathParticles();
+  if (score > highScore) highScore = score;
+  state = 'dead';
+}
+
+// ============================================================
+//  DRAWING HELPERS
+// ============================================================
+
+// Scrolling grid background
+function drawBackground() {
+  // Sky gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, GROUND_Y);
+  grad.addColorStop(0, THEME.skyTop);
+  grad.addColorStop(1, THEME.skyBot);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid lines
+  const spacing = 60;
+  ctx.strokeStyle = THEME.gridLine;
+  ctx.lineWidth = 1;
+  const offset = bgOffset % spacing;
+  for (let x = -spacing + offset; x < canvas.width + spacing; x += spacing) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, GROUND_Y); ctx.stroke();
+  }
+  for (let y = 0; y < GROUND_Y; y += spacing) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+}
+
+function drawGround() {
+  const grad = ctx.createLinearGradient(0, GROUND_Y, 0, canvas.height);
+  grad.addColorStop(0, THEME.groundTop);
+  grad.addColorStop(1, THEME.groundBot);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, GROUND_Y, canvas.width, GROUND_H);
+
+  // Ground line glow
+  ctx.shadowColor = '#7c3aed';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = '#9d5cf6';
+  ctx.fillRect(0, GROUND_Y, canvas.width, 3);
+  ctx.shadowBlur = 0;
+
+  // Ground tile pattern
+  ctx.strokeStyle = 'rgba(124,58,237,0.2)';
+  ctx.lineWidth = 1;
+  const tileW = 40;
+  const off = bgOffset % tileW;
+  for (let x = -tileW + off; x < canvas.width; x += tileW) {
+    ctx.beginPath(); ctx.moveTo(x, GROUND_Y); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+}
+
+function drawCube() {
+  ctx.save();
+  ctx.translate(player.x + CUBE_SIZE / 2, player.y + CUBE_SIZE / 2);
+  ctx.rotate(player.angle);
+
+  // Scale everything to fit CUBE_SIZE (36px). Remote drawn at 24w x 36h then scaled.
+  const W = 24, H = 36;
+  const ox = -W / 2, oy = -H / 2; // top-left origin
+
+  // --- Glow ---
+  ctx.shadowColor = 'rgba(140,80,255,0.5)';
+  ctx.shadowBlur = 16;
+
+  // --- Body: dark rounded rectangle ---
+  ctx.fillStyle = '#1a1a2e';
+  ctx.beginPath();
+  ctx.roundRect(ox, oy, W, H, 5);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+
+  // --- Body border ---
+  ctx.strokeStyle = '#3a3a5e';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(ox, oy, W, H, 5);
+  ctx.stroke();
+
+  // --- Roku purple pill / logo area at top ---
+  ctx.fillStyle = '#6c2bce';
+  ctx.beginPath();
+  ctx.roundRect(ox + 4, oy + 3, W - 8, 7, 3);
+  ctx.fill();
+
+  // Roku "R" logo (simplified white letter)
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 5px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('ROKU', 0, oy + 6.5);
+
+  // --- D-pad (cross) ---
+  const dpCX = 0, dpCY = oy + 18;
+  const dpR = 5.5; // arm half-width
+  const dpL = 3.5; // arm length from center
+
+  ctx.fillStyle = '#2e2e4e';
+  // horizontal arm
+  ctx.fillRect(dpCX - dpR - dpL, dpCY - dpL * 0.6, (dpR + dpL) * 2, dpL * 1.2);
+  // vertical arm
+  ctx.fillRect(dpCX - dpL * 0.6, dpCY - dpR - dpL, dpL * 1.2, (dpR + dpL) * 2);
+
+  // D-pad center circle
+  ctx.fillStyle = '#3a3a6e';
+  ctx.beginPath();
+  ctx.arc(dpCX, dpCY, dpL * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+
+  // D-pad arrow hints (tiny triangles)
+  ctx.fillStyle = '#8888bb';
+  const arrowSize = 1.4;
+  // Up
+  ctx.beginPath();
+  ctx.moveTo(dpCX, dpCY - dpR - dpL + 2);
+  ctx.lineTo(dpCX - arrowSize, dpCY - dpR - dpL + 2 + arrowSize * 1.6);
+  ctx.lineTo(dpCX + arrowSize, dpCY - dpR - dpL + 2 + arrowSize * 1.6);
+  ctx.fill();
+  // Down
+  ctx.beginPath();
+  ctx.moveTo(dpCX, dpCY + dpR + dpL - 2);
+  ctx.lineTo(dpCX - arrowSize, dpCY + dpR + dpL - 2 - arrowSize * 1.6);
+  ctx.lineTo(dpCX + arrowSize, dpCY + dpR + dpL - 2 - arrowSize * 1.6);
+  ctx.fill();
+  // Left
+  ctx.beginPath();
+  ctx.moveTo(dpCX - dpR - dpL + 2, dpCY);
+  ctx.lineTo(dpCX - dpR - dpL + 2 + arrowSize * 1.6, dpCY - arrowSize);
+  ctx.lineTo(dpCX - dpR - dpL + 2 + arrowSize * 1.6, dpCY + arrowSize);
+  ctx.fill();
+  // Right
+  ctx.beginPath();
+  ctx.moveTo(dpCX + dpR + dpL - 2, dpCY);
+  ctx.lineTo(dpCX + dpR + dpL - 2 - arrowSize * 1.6, dpCY - arrowSize);
+  ctx.lineTo(dpCX + dpR + dpL - 2 - arrowSize * 1.6, dpCY + arrowSize);
+  ctx.fill();
+
+  // --- OK button (center of d-pad, highlighted) ---
+  ctx.fillStyle = '#6c2bce';
+  ctx.beginPath();
+  ctx.arc(dpCX, dpCY, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // --- Bottom row: two small buttons ---
+  const btnY = oy + H - 8;
+  // Back button (left)
+  ctx.fillStyle = '#2e2e4e';
+  ctx.beginPath();
+  ctx.arc(ox + 7, btnY, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#7777aa';
+  ctx.font = '3px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('←', ox + 7, btnY);
+
+  // Home button (right)
+  ctx.fillStyle = '#2e2e4e';
+  ctx.beginPath();
+  ctx.arc(ox + W - 7, btnY, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#7777aa';
+  ctx.fillText('⌂', ox + W - 7, btnY);
+
+  ctx.restore();
+}
+
+function drawTrail() {
+  player.trailPoints.forEach((pt, i) => {
+    const alpha = (1 - i / player.trailPoints.length) * 0.4;
+    const size  = CUBE_SIZE * (1 - i / player.trailPoints.length) * 0.6;
+    ctx.fillStyle = `rgba(108,43,206,${alpha})`;
+    ctx.fillRect(pt.x - size/2, pt.y - size/2, size, size);
+  });
+}
+
+function drawSpike(o) {
+  // Draw a retro CRT TV instead of a spike
+  ctx.save();
+
+  const tvW = o.w + 6;
+  const tvH = o.h;
+  const tx = o.x - 3;           // left edge
+  const ty = o.y - tvH;         // top edge (sits on ground)
+
+  // --- Glow ---
+  ctx.shadowColor = 'rgba(255,80,80,0.5)';
+  ctx.shadowBlur  = 14;
+
+  // --- Outer casing ---
+  ctx.fillStyle = '#222233';
+  ctx.beginPath();
+  ctx.roundRect(tx, ty, tvW, tvH, 4);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // --- Casing border ---
+  ctx.strokeStyle = '#444466';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(tx, ty, tvW, tvH, 4);
+  ctx.stroke();
+
+  // --- Screen bezel (inset) ---
+  const bx = tx + 4, by = ty + 4;
+  const bw = tvW - 8, bh = tvH - 14;
+  ctx.fillStyle = '#111122';
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 2);
+  ctx.fill();
+
+  // --- Screen content: static/glitch effect (red tinted) ---
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bw, bh, 2);
+  ctx.clip();
+
+  // Red angry screen
+  const screenGrad = ctx.createRadialGradient(bx+bw/2, by+bh/2, 2, bx+bw/2, by+bh/2, bw);
+  screenGrad.addColorStop(0, '#ff2222');
+  screenGrad.addColorStop(1, '#880000');
+  ctx.fillStyle = screenGrad;
+  ctx.fillRect(bx, by, bw, bh);
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  for (let sy = by; sy < by + bh; sy += 2) {
+    ctx.fillRect(bx, sy, bw, 1);
+  }
+
+  // Screen glare highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.beginPath();
+  ctx.ellipse(bx + bw * 0.35, by + bh * 0.3, bw * 0.25, bh * 0.2, -0.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Angry "X" face on screen
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  const fx = bx + bw / 2, fy = by + bh / 2;
+  const ew = bw * 0.18;
+  // Left eye X
+  ctx.beginPath(); ctx.moveTo(fx - ew*2 - ew, fy - bh*0.15 - ew); ctx.lineTo(fx - ew*2 + ew, fy - bh*0.15 + ew); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(fx - ew*2 + ew, fy - bh*0.15 - ew); ctx.lineTo(fx - ew*2 - ew, fy - bh*0.15 + ew); ctx.stroke();
+  // Right eye X
+  ctx.beginPath(); ctx.moveTo(fx + ew*2 - ew, fy - bh*0.15 - ew); ctx.lineTo(fx + ew*2 + ew, fy - bh*0.15 + ew); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(fx + ew*2 + ew, fy - bh*0.15 - ew); ctx.lineTo(fx + ew*2 - ew, fy - bh*0.15 + ew); ctx.stroke();
+  // Angry mouth (downward arc)
+  ctx.beginPath();
+  ctx.arc(fx, fy + bh * 0.15, bw * 0.2, 0.2, Math.PI - 0.2);
+  ctx.stroke();
+
+  ctx.restore();
+
+  // --- Bottom panel: legs / stand ---
+  const legW = tvW * 0.28;
+  const legH = 5;
+  const legY = ty + tvH - 4;
+  ctx.fillStyle = '#333355';
+  ctx.fillRect(tx + tvW * 0.15, legY, legW, legH);
+  ctx.fillRect(tx + tvW * 0.57, legY, legW, legH);
+
+  // --- Antenna (two thin rods from top) ---
+  ctx.strokeStyle = '#555577';
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(tx + tvW * 0.38, ty);
+  ctx.lineTo(tx + tvW * 0.22, ty - 9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(tx + tvW * 0.62, ty);
+  ctx.lineTo(tx + tvW * 0.78, ty - 9);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawPlatform(o) {
+  ctx.save();
+
+  const tx = o.x, ty = o.y, tw = o.w, th = o.h + 10;
+  const actualTy = ty - 6; // shift up a little so it visually sits right
+
+  // Glow
+  ctx.shadowColor = 'rgba(108,43,206,0.5)';
+  ctx.shadowBlur = 10;
+
+  // Outer casing
+  ctx.fillStyle = '#1e1e33';
+  ctx.beginPath();
+  ctx.roundRect(tx, actualTy, tw, th, 5);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = '#5544aa';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(tx, actualTy, tw, th, 5);
+  ctx.stroke();
+
+  // Screen area
+  const sx = tx + 4, sy = actualTy + 3, sw = tw - 8, sh = th - 8;
+  ctx.fillStyle = '#0a0a1a';
+  ctx.beginPath();
+  ctx.roundRect(sx, sy, sw, sh, 3);
+  ctx.fill();
+
+  // Screen: purple/blue gradient
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(sx, sy, sw, sh, 3);
+  ctx.clip();
+
+  const pg = ctx.createLinearGradient(sx, sy, sx + sw, sy + sh);
+  pg.addColorStop(0, '#3a0ca3');
+  pg.addColorStop(1, '#7209b7');
+  ctx.fillStyle = pg;
+  ctx.fillRect(sx, sy, sw, sh);
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  for (let sl = sy; sl < sy + sh; sl += 2) ctx.fillRect(sx, sl, sw, 1);
+
+  // Roku logo on the floating platform screen
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = `bold ${Math.max(5, sh * 0.55)}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('ROKU', sx + sw / 2, sy + sh / 2);
+
+  ctx.restore();
+
+  // Stand nub at bottom center
+  ctx.fillStyle = '#333355';
+  ctx.fillRect(tx + tw/2 - 5, actualTy + th, 10, 4);
+
+  ctx.restore();
+}
+
+function drawObstacles() {
+  for (const o of obstacles) {
+    if (o.type === 'spike')    drawSpike(o);
+    if (o.type === 'platform') drawPlatform(o);
+  }
+}
+
+function drawParticles() {
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    if (p.square) {
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size/2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+  // Score
+  ctx.fillStyle = THEME.score;
+  ctx.font = 'bold 22px "Segoe UI"';
+  ctx.textAlign = 'left';
+  ctx.fillText(`Score: ${score}`, 20, 34);
+
+  // High score
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  ctx.font = '14px "Segoe UI"';
+  ctx.fillText(`Best: ${highScore}`, 20, 56);
+
+  // Jump pips
+  for (let i = 0; i < 2; i++) {
+    ctx.fillStyle = i < player.jumpsLeft ? THEME.cube : 'rgba(255,255,255,0.15)';
+    ctx.beginPath();
+    ctx.arc(canvas.width - 24 - i * 22, 26, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawWaitScreen() {
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = THEME.cube;
+  ctx.font = 'bold 40px "Segoe UI"';
+  ctx.shadowColor = THEME.cubeGlow;
+  ctx.shadowBlur = 20;
+  ctx.fillText('CUBE DASH', canvas.width/2, canvas.height/2 - 40);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = '18px "Segoe UI"';
+  ctx.fillText('Press SPACE or click to begin', canvas.width/2, canvas.height/2 + 10);
+}
+
+function drawDeathScreen() {
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+
+  ctx.fillStyle = THEME.death;
+  ctx.font = 'bold 38px "Segoe UI"';
+  ctx.shadowColor = THEME.spikeGlow;
+  ctx.shadowBlur = 20;
+  ctx.fillText('YOU DIED', canvas.width/2, canvas.height/2 - 50);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '20px "Segoe UI"';
+  ctx.fillText(`Score: ${score}`, canvas.width/2, canvas.height/2 - 10);
+
+  if (score >= highScore && score > 0) {
+    ctx.fillStyle = THEME.orb;
+    ctx.font = 'bold 16px "Segoe UI"';
+    ctx.fillText('✦ NEW HIGH SCORE ✦', canvas.width/2, canvas.height/2 + 20);
+  }
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '16px "Segoe UI"';
+  ctx.fillText('Press SPACE or click to retry', canvas.width/2, canvas.height/2 + 50);
+}
+
+// ============================================================
+//  GAME RESET
+// ============================================================
+function resetGame() {
+  player.reset();
+  obstacles = [];
+  particles = [];
+  spawnTimer = 0;
+  score = 0;
+  state = 'playing';
+}
+
+// ============================================================
+//  INPUT
+// ============================================================
+function handleInput() {
+  if (state === 'waiting') { resetGame(); return; }
+  if (state === 'dead')    { resetGame(); return; }
+  if (state === 'playing') { player.jump(); }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') { e.preventDefault(); handleInput(); }
+});
+canvas.addEventListener('click', handleInput);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); handleInput(); }, { passive: false });
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+let frameCount = 0;
+
+function loop() {
+  requestAnimationFrame(loop);
+
+  bgOffset += SCROLL_SPEED;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  drawBackground();
+  drawGround();
+
+  if (state === 'playing') {
+    player.update();
+    updateObstacles();
+    updateParticles();
+    checkCollisions();
+
+    // Score: every 60 frames = 1 point
+    frameCount++;
+    if (frameCount % 60 === 0) score++;
+  }
+
+  if (state === 'dead' || state === 'playing') {
+    drawTrail();
+    drawObstacles();
+    drawParticles();
+    if (player.alive) drawCube();
+    drawHUD();
+  }
+
+  if (state === 'waiting') drawWaitScreen();
+  if (state === 'dead')    drawDeathScreen();
+}
+
+loop();
+</script>
+</body>
+</html>
