@@ -848,26 +848,115 @@ function drawRokuRemote(cx,cy,angle){
 }
 
 function drawShip(cx,cy,angle){
+  // Roku remote laid HORIZONTALLY — points right, engine fires left
   ctx.save(); ctx.translate(cx,cy); ctx.rotate(angle);
-  ctx.shadowColor='rgba(0,200,255,0.6)'; ctx.shadowBlur=18;
-  ctx.fillStyle='#00c8ff';
-  ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(-14,-12); ctx.lineTo(-8,0); ctx.lineTo(-14,12); ctx.closePath(); ctx.fill();
-  ctx.fillStyle='#001a2e'; ctx.beginPath(); ctx.ellipse(4,0,8,6,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='rgba(0,200,255,0.25)'; ctx.beginPath(); ctx.ellipse(4,0,8,6,0,0,Math.PI*2); ctx.fill();
-  ctx.shadowColor='#ff8800'; ctx.shadowBlur=12;
-  ctx.fillStyle='#ff8800'; ctx.beginPath(); ctx.moveTo(-14,-8); ctx.lineTo(-24,0); ctx.lineTo(-14,8); ctx.fill();
-  ctx.shadowBlur=0; ctx.restore();
+
+  const W=38, H=22, ox=-W/2, oy=-H/2;
+
+  // Engine thrust glow
+  const thrustSize = 6 + Math.abs(Math.sin(frameCount*0.3))*5;
+  const tg=ctx.createRadialGradient(ox-4,0,0,ox-4,0,thrustSize+8);
+  tg.addColorStop(0,'rgba(0,220,255,0.9)');
+  tg.addColorStop(0.4,'rgba(108,43,206,0.6)');
+  tg.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=tg;
+  ctx.beginPath(); ctx.arc(ox-4,0,thrustSize+8,0,Math.PI*2); ctx.fill();
+
+  // Exhaust flame cone
+  ctx.fillStyle='rgba(0,200,255,0.7)';
+  ctx.beginPath();
+  ctx.moveTo(ox+2, -4);
+  ctx.lineTo(ox-thrustSize, 0);
+  ctx.lineTo(ox+2, 4);
+  ctx.closePath(); ctx.fill();
+
+  // Remote body (horizontal)
+  ctx.shadowColor='rgba(108,43,206,0.7)'; ctx.shadowBlur=14;
+  ctx.fillStyle='#1a1a2e'; rr(ox,oy,W,H,5); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='#3a3a5e'; ctx.lineWidth=1; rr(ox,oy,W,H,5); ctx.stroke();
+
+  // ROKU label strip across top
+  ctx.fillStyle='#6c2bce'; rr(ox+3,oy+2,W-6,6,2); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 4px Arial';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('ROKU', ox+W/2, oy+5);
+
+  // D-pad (small, in center)
+  const dpx=ox+W*0.42, dpy=oy+H*0.62, dpr=4.5, dpa=2.5;
+  ctx.fillStyle='#2e2e4e';
+  ctx.fillRect(dpx-dpr-dpa, dpy-dpa*0.6, (dpr+dpa)*2, dpa*1.2);
+  ctx.fillRect(dpx-dpa*0.6, dpy-dpr-dpa, dpa*1.2, (dpr+dpa)*2);
+  ctx.fillStyle='#3a3a6e'; ctx.beginPath(); ctx.arc(dpx,dpy,dpa*0.8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#6c2bce'; ctx.beginPath(); ctx.arc(dpx,dpy,1.8,0,Math.PI*2); ctx.fill();
+
+  // Two buttons right of d-pad
+  const bBy=oy+H*0.62;
+  [{x:ox+W*0.75,c:'#6c2bce'},{x:ox+W*0.88,c:'#2e2e4e'}].forEach(({x,c})=>{
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(x,bBy,2.2,0,Math.PI*2); ctx.fill();
+  });
+
+  // Nose tip (pointed right)
+  ctx.fillStyle='#2a2a48';
+  ctx.beginPath();
+  ctx.moveTo(ox+W, oy+4);
+  ctx.lineTo(ox+W+7, 0);
+  ctx.lineTo(ox+W, oy+H-4);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#5544aa'; ctx.lineWidth=0.8;
+  ctx.beginPath();
+  ctx.moveTo(ox+W, oy+4);
+  ctx.lineTo(ox+W+7, 0);
+  ctx.lineTo(ox+W, oy+H-4);
+  ctx.closePath(); ctx.stroke();
+
+  ctx.restore();
 }
 
 function drawWave(cx,cy,angle){
+  // Roku remote rotated 45° — diamond orientation, sleek and fast
   ctx.save(); ctx.translate(cx,cy); ctx.rotate(angle);
-  ctx.shadowColor='rgba(0,255,150,0.6)'; ctx.shadowBlur=16;
-  ctx.fillStyle='#00ff96';
-  const s=CUBE_SIZE*0.55;
-  ctx.beginPath(); ctx.moveTo(0,-s); ctx.lineTo(s,0); ctx.lineTo(0,s); ctx.lineTo(-s,0); ctx.closePath(); ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(-s*0.5,0); ctx.lineTo(s*0.5,0); ctx.stroke();
-  ctx.shadowBlur=0; ctx.restore();
+
+  const W=20, H=30;  // portrait remote dims
+  // Rotate remote 45° so it looks like a flying diamond
+  ctx.rotate(Math.PI/4);
+
+  const ox=-W/2, oy=-H/2;
+
+  // Speed streak glow
+  ctx.shadowColor='rgba(0,255,150,0.8)'; ctx.shadowBlur=18;
+
+  // Remote body
+  ctx.fillStyle='#1a2e1a'; rr(ox,oy,W,H,5); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='#00ff96'; ctx.lineWidth=1.2; rr(ox,oy,W,H,5); ctx.stroke();
+
+  // ROKU strip
+  ctx.fillStyle='#00cc78'; rr(ox+2,oy+2,W-4,6,2); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.font='bold 3.5px Arial';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('ROKU', ox+W/2, oy+5);
+
+  // Mini d-pad
+  const dpx=ox+W/2, dpy=oy+H*0.45, dpr=3.5, dpa=2;
+  ctx.fillStyle='#1a3a2a';
+  ctx.fillRect(dpx-dpr-dpa, dpy-dpa*0.5, (dpr+dpa)*2, dpa);
+  ctx.fillRect(dpx-dpa*0.5, dpy-dpr-dpa, dpa, (dpr+dpa)*2);
+  ctx.fillStyle='#00cc78'; ctx.beginPath(); ctx.arc(dpx,dpy,1.5,0,Math.PI*2); ctx.fill();
+
+  // Two small buttons below d-pad
+  [{x:ox+W*0.38,y:oy+H*0.72},{x:ox+W*0.62,y:oy+H*0.72}].forEach(({x,y})=>{
+    ctx.fillStyle='#1a3a2a'; ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#00cc78'; ctx.lineWidth=0.7;
+    ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2); ctx.stroke();
+  });
+
+  // Neon edge glow lines along body
+  ctx.strokeStyle='rgba(0,255,150,0.4)'; ctx.lineWidth=0.8; ctx.shadowColor='#00ff96'; ctx.shadowBlur=6;
+  ctx.strokeRect(ox+1,oy+1,W-2,H-2);
+  ctx.shadowBlur=0;
+
+  ctx.restore();
 }
 
 function drawPlayer(){
